@@ -1,0 +1,210 @@
+
+from pathlib import Path
+import re
+import requests
+
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI(title="DENGO AI STUDIO")
+
+BASE_DIR = Path("D:/DengoAI/data/knowledge")
+RULES_FILE = BASE_DIR / "system_rules.txt"
+CANON_DIR = BASE_DIR / "canon"
+
+OLLAMA_URL = "http://localhost:11434/api/chat"
+MODEL = "qwen2.5:0.5b"
+
+
+class ChatRequest(BaseModel):
+    message: str
+
+
+def load_rules():
+    if RULES_FILE.exists():
+        return RULES_FILE.read_text(encoding="utf-8")
+    return "Правила проекта не найдены."
+
+
+def load_canon_files():
+    files = []
+
+    if not CANON_DIR.exists():
+        return files
+
+    for path in CANON_DIR.rglob("*.txt"):
+        try:
+            content = path.read_text(encoding="utf-8")
+            files.append({
+                "name": str(path.relative_to(CANON_DIR)),
+                "content": content
+            })
+        except Exception:
+            pass
+
+    return files
+
+
+def find_relevant_canon(question):
+    files = load_canon_files()
+    words = set(re.findall(r"[а-яёa-z0-9]+", question.lower()))
+
+    # Связанные слова помогают находить нужный раздел.
+    aliases = {
+        "ханзо": {"дракон", "монстр", "чудовище", "легендарный"},
+        "дракон": {"ханзо", "монстр", "чудовище"},
+        "арто": {"персонаж", "печать", "герой"},
+        "рен": {"персонаж", "воздух", "меч"},
+        "юна": {"персонаж", "лечение"},
+        "брок": {"кузнец", "оружие", "ханзо"},
+        "печать": {"джи", "антипечать", "клан"},
+        "антипечать": {"печать", "оружие", "сто лет"},
+        "джи": {"энергия", "уровень", "восстановление"}
+    }
+
+    expanded_words = set(words)
+
+    for word in words:
+        expanded_words.update(aliases.get(word, set()))
+
+    candidates = []
+
+    for file in files:
+        paragraphs = [
+            p.strip()
+            for p in re.split(r"\n\s*\n", file["content"])
+            if p.strip()
+        ]
+
+        for paragraph in paragraphs:
+            paragraph_words = set(
+                re.findall(r"[а-яёa-z0-9]+", paragraph.lower())
+            )
+
+            score = len(expanded_words & paragraph_words)
+
+            if score > 0:
+                candidates.append({
+                    "name": file["name"],
+                    "text": paragraph,
+                    "score": score
+                })
+
+    candidates.sort(
+        key=lambda item: item["score"],
+        reverse=True
+    )
+
+    selected = candidates[:2]
+
+    if not selected:
+        return "В каноне не найдены подходящие сведения."
+
+    result = []
+
+    for item in selected:
+        result.append(
+            f"ФАЙЛ: {item['name']}\n{item['text']}"
+        )
+
+    return "\n\n".join(result)
+
+
+@app.get("/")
+def home():
+    return {
+        "name": "DENGO AI STUDIO",
+        "status": "Online"
+    }
+
+
+@app.get("/rules")
+def get_rules():
+    return {
+        "status": "Rules loaded",
+        "rules": load_rules()
+    }
+
+
+@app.get("/knowledge")
+def get_knowledge():
+    files = load_canon_files()
+
+    return {
+        "status": "Knowledge loaded",
+        "files_loaded": len(files),
+        "files": [file["name"] for file in files]
+    }
+
+
+@app.post("/chat")
+def chat(request: ChatRequest):
+    rules = load_rules()
+    canon = find_relevant_canon(request.message)
+
+    
+    system_prompt = (
+        "Ты AI-помощник авторского проекта DENGO.\n"
+        "ТВОЯ ГЛАВНАЯ ЗАДАЧА — СОХРАНЯТЬ КАНОН.\n\n"
+
+        "СТРОГИЕ ПРАВИЛА:\n"
+        "1. Используй только факты из предоставленных материалов канона.\n"
+        "2. Никогда не придумывай имена, цифры, размеры, способности и события.\n"
+        "3. Если информации нет в материалах, отвечай: "
+        "'В утверждённом каноне DENGO эта информация не указана.'\n"
+        "Никогда не используй 0, ноль или другое число вместо "
+        "неизвестного значения. Отсутствие информации не означает ноль.\n"
+        "4. Не добавляй характеристики от себя.\n"
+        "5. Не смешивай сведения о разных персонажах.\n"
+        "6. Не превращай номера уровней, возраст или способности "
+        "других персонажей в характеристики того, о ком спрашивают.\n"
+        "7. Не выдавай предположения за факты.\n"
+        "8. Отвечай только на заданный вопрос.\n"
+        "9. Пиши кратко и на русском языке.\n"
+        "10. Если найденные материалы не относятся к вопросу, "
+        "не используй их.\n\n"
+
+        "ПРАВИЛА ПРОЕКТА:\n"
+        + rules
+        + "\n\nМАТЕРИАЛЫ КАНОНА:\n"
+        + canon
+    )
+
+
+    payload = {
+        "model": MODEL,
+        "stream": False,
+        "messages": [
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role": "user",
+                "content": request.message
+            }
+        ]
+    }
+
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json=payload,
+            timeout=600
+        )
+        response.raise_for_status()
+
+        result = response.json()
+
+        return {
+            "status": "success",
+            "model": MODEL,
+            "canon_used": canon,
+            "answer": result["message"]["content"]
+        }
+
+    except requests.RequestException as error:
+        return {
+            "status": "error",
+            "message": str(error)
+        }

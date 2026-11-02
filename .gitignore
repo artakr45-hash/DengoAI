@@ -1,0 +1,19 @@
+# Python environments and generated files
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local runtime data
+/logs/
+/models/
+/data/output/
+
+# Installed media tooling and its downloaded archive
+/ffmpeg-9.0.2-essentials_build/
+/ffmpeg-9.0.2-essentials_build.zip
+
+# Local credentials and machine settings
+.env
+.env.*
+!.env.example
