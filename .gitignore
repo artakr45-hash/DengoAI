@@ -17,3 +17,10 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Retained local archives and backups excluded from public Git history
+/data/knowledge/canon/DENGO_CANON_PACKAGE.zip
+/data/knowledge/canon/Dengo_Full_World_Archive_original.pdf
+/DENGO_GREAT_WAR_1224_1228_DRAFT_RU.backup-20261102-before-historical-cast.md
+/main.py.backup-20261101-222859
+/main.py.backup-stage2-20261101-224029
